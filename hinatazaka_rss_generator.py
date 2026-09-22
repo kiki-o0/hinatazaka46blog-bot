@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 
 
 BASE_URL = "https://www.hinatazaka46.com"
-# 新しい日向坂リポジトリのURL
+# ご自身のリポジトリ名に合わせて変更してください（今回は専用リポジトリなのでhinatazaka46blog-botです）
 FEED_BASE_URL = "https://kiki-o0.github.io/hinatazaka46blog-bot/"
 
 # メンバーの背番号リスト (日向坂46 現役・ブログ公開メンバーのみに絞り込み)
@@ -37,7 +37,7 @@ def parse_article(url):
     response = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "html.parser")
-
+    
     detailed_date = ""
     date_tags = soup.find_all(class_="c-blog-article__date")
     for tag in date_tags:
@@ -45,34 +45,34 @@ def parse_article(url):
         if re.search(r'\d{1,2}:\d{2}', text):
             detailed_date = text
             break
-
+            
     article = soup.find(class_="c-blog-article__text")
     if not article:
         return "", detailed_date
-
+        
     for guide in article.find_all(class_=lambda x: x and 'app_guide' in x):
         guide.decompose()
-
+        
     for img in article.find_all("img"):
         src = img.get("src", "")
         if not src or "app_guide" in src:
             img.decompose()
             continue
-
+            
         img_url = urljoin(BASE_URL, src)
         safe_url = escape(img_url)
         img_html = f'<p><a href="{safe_url}"><img src="{safe_url}" alt="公式ブログ画像"></a></p>'
         img.replace_with(f"__IMG_START__{img_html}__IMG_END__")
-
+        
     elements = []
     raw_text = article.get_text(separator="\n", strip=True)
     parts = re.split(r'__IMG_START__(.*?)__IMG_END__', raw_text)
-
+    
     for i, part in enumerate(parts):
         part = part.strip()
         if not part:
             continue
-
+            
         if i % 2 == 1:
             elements.append(part)
         else:
@@ -82,7 +82,7 @@ def parse_article(url):
                     continue
                 if line:
                     elements.append("<p>" + escape(line) + "</p>")
-
+                    
     return chr(10).join(elements), detailed_date
 
 def generate_feed_for_member(member_id):
@@ -95,43 +95,52 @@ def generate_feed_for_member(member_id):
         return
 
     soup = BeautifulSoup(res.text, "html.parser")
-
-    name_tag = soup.find(class_="c-blog-page__title")
-    member_name = name_tag.text.strip() if name_tag else f"メンバー{member_id}"
+    
+    # メンバー名の取得方法を修正
+    member_name = f"メンバー{member_id}"
+    
+    # 記事内の名前タグ、もしくはページタイトルからメンバー名を抽出する
+    name_tag = soup.find(class_="c-blog-article__name")
+    if name_tag:
+        member_name = name_tag.text.strip()
+    else:
+        page_title = soup.title.text if soup.title else ""
+        if "公式ブログ" in page_title:
+            member_name = page_title.split("公式ブログ")[0].strip()
 
     posts = soup.find_all("div", class_="p-blog-article")
     if not posts:
         print(f"[{member_id}] 記事が見つかりません")
         return
-
+        
     entries = []
     feed_updated = None
-
+    
     for post in posts[:3]:
         post_a = post.find("a", class_="c-button-blog-detail")
         if not post_a:
             post_a = post.find("div", class_="c-blog-article__title").find("a")
             if not post_a:
                 continue
-
+            
         article_url = urljoin(BASE_URL, post_a["href"])
-
+        
         title_tag = post.find(class_="c-blog-article__title")
         title = title_tag.text.strip() if title_tag else "無題"
-
+        
         print(f"  -> 記事取得中: {title}")
         content, detailed_date = parse_article(article_url)
         time.sleep(1)
-
+        
         if not detailed_date:
             date_tag = post.find(class_="c-blog-article__date")
             detailed_date = date_tag.text.strip() if date_tag else ""
-
+            
         entry_updated = parse_date_to_iso(detailed_date)
-
+        
         if not feed_updated:
             feed_updated = entry_updated
-
+        
         entry = f"""
   <entry>
     <title>{escape(title)}</title>
@@ -149,13 +158,13 @@ def generate_feed_for_member(member_id):
 
     if not entries:
         return
-
+        
     if not feed_updated:
         feed_updated = datetime.now(timezone.utc).isoformat()
-
+        
     feed_filename = f"feed_{member_id}.xml"
     feed_url = f"{FEED_BASE_URL}{feed_filename}"
-
+    
     xml = f"""<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>日向坂46｜{escape(member_name)} 公式ブログ</title>
