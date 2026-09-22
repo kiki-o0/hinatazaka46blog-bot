@@ -10,20 +10,17 @@ from bs4 import BeautifulSoup
 
 
 BASE_URL = "https://www.hinatazaka46.com"
-# ご自身のリポジトリ名に合わせて変更してください（今回は専用リポジトリなのでhinatazaka46blog-botです）
 FEED_BASE_URL = "https://kiki-o0.github.io/hinatazaka46blog-bot/"
 
-# メンバーの背番号リスト (日向坂46 現役・ブログ公開メンバーのみに絞り込み)
+# メンバーの背番号リスト (日向坂46 現役・ブログ公開メンバーのみ)
 MEMBER_IDS = [
-    # 卒業・ブログ閉鎖メンバーを除外
     "12", "14", # 2期生
     "21", "22", "23", "24", # 3期生・新3期生
     "25", "27", "28", "29", "30", "31", "32", "33", "34", "35", # 4期生
-    "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46" # 5期生 (2025年3月加入)
+    "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46" # 5期生
 ]
 
 def parse_date_to_iso(date_str):
-    # ブログの投稿日時から確実な日付形式を作成
     m = re.findall(r'\d+', date_str)
     if len(m) >= 3:
         year, month, day = m[0], m[1], m[2]
@@ -96,10 +93,7 @@ def generate_feed_for_member(member_id):
 
     soup = BeautifulSoup(res.text, "html.parser")
     
-    # メンバー名の取得方法を修正
     member_name = f"メンバー{member_id}"
-    
-    # 記事内の名前タグ、もしくはページタイトルからメンバー名を抽出する
     name_tag = soup.find(class_="c-blog-article__name")
     if name_tag:
         member_name = name_tag.text.strip()
@@ -130,7 +124,8 @@ def generate_feed_for_member(member_id):
         
         print(f"  -> 記事取得中: {title}")
         content, detailed_date = parse_article(article_url)
-        time.sleep(1)
+        # ★タイムリープ（長めのウェイト：3秒）を挿入してサーバー負荷を軽減
+        time.sleep(3)
         
         if not detailed_date:
             date_tag = post.find(class_="c-blog-article__date")
@@ -182,7 +177,8 @@ def main():
     os.makedirs("feeds", exist_ok=True)
     for member_id in MEMBER_IDS:
         generate_feed_for_member(member_id)
-        time.sleep(1)
+        # ★メンバーごとの間隔も3秒に延長
+        time.sleep(3)
     print("=== 全ての処理が完了しました ===")
 
 if __name__ == "__main__":
