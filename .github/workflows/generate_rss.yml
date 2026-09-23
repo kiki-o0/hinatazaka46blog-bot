@@ -3,7 +3,7 @@ name: Generate and deploy hinata blog all RSS
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/45 * * * *"
 
 permissions:
   contents: read
