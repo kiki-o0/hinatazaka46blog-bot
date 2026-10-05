@@ -58,7 +58,8 @@ def parse_article(url):
             
         img_url = urljoin(BASE_URL, src)
         safe_url = escape(img_url)
-        img_html = f'<p><a href="{safe_url}"><img src="{safe_url}" alt="公式ブログ画像"></a></p>'
+        # ここで alt="公式ブログ画像" を alt="" に変更し、無駄な文字の出力を防ぎます
+        img_html = f'<p><a href="{safe_url}"><img src="{safe_url}" alt=""></a></p>'
         img.replace_with(f"__IMG_START__{img_html}__IMG_END__")
         
     elements = []
@@ -88,7 +89,7 @@ def generate_feed_for_member(member_id):
         res = requests.get(list_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         res.raise_for_status()
     except Exception as e:
-        print(f"[{member_id}] リスト取得エラー: {e}")
+        print(f"[{member_id}] [エラー] リスト取得失敗: {e}")
         return
 
     soup = BeautifulSoup(res.text, "html.parser")
@@ -104,7 +105,7 @@ def generate_feed_for_member(member_id):
 
     posts = soup.find_all("div", class_="p-blog-article")
     if not posts:
-        print(f"[{member_id}] 記事が見つかりません")
+        print(f"[{member_id}] [スキップ] 記事が見つかりません")
         return
         
     entries = []
@@ -122,8 +123,14 @@ def generate_feed_for_member(member_id):
         title_tag = post.find(class_="c-blog-article__title")
         title = title_tag.text.strip() if title_tag else "無題"
         
-        print(f"  -> 記事取得中: {title}")
-        content, detailed_date = parse_article(article_url)
+        print(f"  -> [取得中] 記事タイトル: {title}")
+        try:
+            content, detailed_date = parse_article(article_url)
+            print(f"     => [成功] 記事解析完了")
+        except Exception as e:
+            print(f"     => [エラー] 記事解析失敗 ({article_url}): {e}")
+            continue
+            
         # ★タイムリープ（長めのウェイト：3秒）を挿入してサーバー負荷を軽減
         time.sleep(3)
         
@@ -170,16 +177,16 @@ def generate_feed_for_member(member_id):
 """
     with open(f"feeds/{feed_filename}", "w", encoding="utf-8") as f:
         f.write(xml)
-    print(f"[{member_id}] {member_name} のフィード生成完了 (feeds/{feed_filename})")
+    print(f"[{member_id}] [完了] {member_name} のフィード生成 (feeds/{feed_filename})")
 
 def main():
-    print("=== 全メンバーのRSS生成を開始します ===")
+    print("=== [処理開始] 全メンバーのRSS生成を開始します ===")
     os.makedirs("feeds", exist_ok=True)
     for member_id in MEMBER_IDS:
         generate_feed_for_member(member_id)
         # ★メンバーごとの間隔も3秒に延長
         time.sleep(3)
-    print("=== 全ての処理が完了しました ===")
+    print("=== [処理完了] 全てのRSS生成が正常に終了しました ===")
 
 if __name__ == "__main__":
     main()
