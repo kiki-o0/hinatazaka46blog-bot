@@ -1,4 +1,4 @@
-name: Generate and deploy hinata blog all RSS
+Name: Generate and deploy hinata blog all RSS
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     - cron: "*/45 * * * *"
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -33,6 +33,14 @@ jobs:
 
       - name: Generate Atom feed
         run: python hinatazaka_rss_generator.py
+
+      - name: Commit and push state file
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add last_blogs.json
+          git commit -m "Update last_blogs.json [skip ci]" || echo "No changes to commit"
+          git push
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
