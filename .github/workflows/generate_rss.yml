@@ -1,4 +1,4 @@
-Name: Generate and deploy hinata blog all RSS
+name: Generate and deploy hinata blog all RSS
 
 on:
   workflow_dispatch:
