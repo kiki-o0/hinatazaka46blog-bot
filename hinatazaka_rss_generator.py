@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import json
 from datetime import datetime, timezone
 from urllib.parse import urljoin
 from xml.sax.saxutils import escape
@@ -11,14 +12,22 @@ from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.hinatazaka46.com"
 FEED_BASE_URL = "https://kiki-o0.github.io/hinatazaka46blog-bot/"
+STATE_FILE = "last_blogs.json"
 
-# メンバーの背番号リスト (日向坂46 現役・ブログ公開メンバーのみ)
-MEMBER_IDS = [
-    "12", "14", # 2期生
-    "21", "22", "23", "24", # 3期生・新3期生
-    "25", "27", "28", "29", "30", "31", "32", "33", "34", "35", # 4期生
-    "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46" # 5期生
-]
+MEMBER_MAPPING = {
+    # 2期生
+    "12": "金村 美玖", "14": "小坂 菜緒",
+    # 3期生・新3期生
+    "21": "上村 ひなの", "22": "高橋 未来虹", "23": "森本 茉莉",
+    # 4期生
+    "25": "石塚 瑶季", "27": "小西 夏菜実", "28": "清水 理央", "29": "正源司 陽子", 
+    "30": "竹内 希来里", "31": "平尾 帆夏", "32": "平岡 海月", "33": "藤嶌 果歩", 
+    "34": "宮地 すみれ", "35": "山下 葉留花", "36": "渡辺 莉奈",
+    # 5期生
+    "37": "大田 美月", "38": "大野 愛実", "39": "片山 紗希", "40": "蔵盛 妃那乃", 
+    "41": "坂井 新奈", "42": "佐藤 優羽", "43": "下田 衣珠季", "44": "高井 俐香", 
+    "45": "鶴崎 仁香", "46": "松尾 桜"
+}
 
 def parse_date_to_iso(date_str):
     m = re.findall(r'\d+', date_str)
@@ -58,7 +67,6 @@ def parse_article(url):
             
         img_url = urljoin(BASE_URL, src)
         safe_url = escape(img_url)
-        # ここで alt="公式ブログ画像" を alt="" に変更し、無駄な文字の出力を防ぎます
         img_html = f'<p><a href="{safe_url}"><img src="{safe_url}" alt=""></a></p>'
         img.replace_with(f"__IMG_START__{img_html}__IMG_END__")
         
@@ -79,12 +87,25 @@ def parse_article(url):
                 if "からのメッセージを受け取る" in line or line == "日向坂46メッセージ" or line == "「日向坂46メッセージ」で":
                     continue
                 if line:
-                    elements.append("<p>" + escape(line) + "</p>")
+                    safe_line = escape(line)
+                    linked_line = re.sub(r'(https?://[a-zA-Z0-9./?=_-]+)', r'<a href="\1" target="_blank">\1</a>', safe_line)
+                    elements.append("<p>" + linked_line + "</p>")
                     
     return chr(10).join(elements), detailed_date
 
-def generate_feed_for_member(member_id):
+def generate_feed_for_member(member_id, state):
+    member_name = MEMBER_MAPPING.get(member_id, f"メンバー{member_id}")
+    safe_member_name = member_name.replace(" ", "").replace("　", "")
+    
+    member_state = state.get(member_id, [])
+    if not isinstance(member_state, list):
+        print(f"[{member_id}] [警告] 古い形式の記憶を見つけたため、新しく作り直します。")
+        member_state = []
+        
+    known_urls = { entry["url"]: entry for entry in member_state if isinstance(entry, dict) and "url" in entry }
+    
     list_url = f"{BASE_URL}/s/official/diary/member/list?ima=0000&ct={member_id}"
+    print(f"[{member_id}] [RSS取得中] {member_name} のブログ一覧にアクセスしています...")
     try:
         res = requests.get(list_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
         res.raise_for_status()
@@ -93,37 +114,51 @@ def generate_feed_for_member(member_id):
         return
 
     soup = BeautifulSoup(res.text, "html.parser")
-    
-    member_name = f"メンバー{member_id}"
-    name_tag = soup.find(class_="c-blog-article__name")
-    if name_tag:
-        member_name = name_tag.text.strip()
-    else:
-        page_title = soup.title.text if soup.title else ""
-        if "公式ブログ" in page_title:
-            member_name = page_title.split("公式ブログ")[0].strip()
-
     posts = soup.find_all("div", class_="p-blog-article")
     if not posts:
-        print(f"[{member_id}] [スキップ] 記事が見つかりません")
+        print(f"[{member_id}] [スキップ] {member_name} の新着記事が見つかりません")
         return
         
-    entries = []
+    new_member_state = []
     feed_updated = None
     
-    for post in posts[:3]:
+    print(f"[{member_id}] [解析中] {member_name} の記事を処理します（最大15件）")
+    
+    for post in posts:
+        if len(new_member_state) >= 15:
+            break
+            
         post_a = post.find("a", class_="c-button-blog-detail")
         if not post_a:
-            post_a = post.find("div", class_="c-blog-article__title").find("a")
+            post_a = post.find("div", class_="c-blog-article__title")
+            if post_a:
+                post_a = post_a.find("a")
             if not post_a:
                 continue
+                
+        href = post_a.get("href", "")
+        article_url = urljoin(BASE_URL, href)
             
-        article_url = urljoin(BASE_URL, post_a["href"])
-        
         title_tag = post.find(class_="c-blog-article__title")
-        title = title_tag.text.strip() if title_tag else "無題"
+        title = title_tag.text.strip() if title_tag and title_tag.text.strip() else "無題"
+            
+        post_name_tag = post.find(class_="c-blog-article__name")
+        if post_name_tag:
+            post_author = post_name_tag.text.strip()
+            safe_post_author = post_author.replace(" ", "").replace("　", "")
+            if not safe_member_name.startswith("メンバー") and safe_post_author != safe_member_name:
+                print(f"  -> [除外] 他メンバー（{post_author}）の記事を検知: スキップします")
+                continue
         
-        print(f"  -> [取得中] 記事タイトル: {title}")
+        if article_url in known_urls:
+            print(f"  -> [高速スキップ] 既知の記事です（データ復元）: {title}")
+            known_data = known_urls[article_url]
+            new_member_state.append(known_data)
+            if not feed_updated:
+                feed_updated = known_data["updated"]
+            continue
+        
+        print(f"  -> [新規取得中] 記事タイトル: {title}")
         try:
             content, detailed_date = parse_article(article_url)
             print(f"     => [成功] 記事解析完了")
@@ -131,7 +166,6 @@ def generate_feed_for_member(member_id):
             print(f"     => [エラー] 記事解析失敗 ({article_url}): {e}")
             continue
             
-        # ★タイムリープ（長めのウェイト：3秒）を挿入してサーバー負荷を軽減
         time.sleep(3)
         
         if not detailed_date:
@@ -139,30 +173,38 @@ def generate_feed_for_member(member_id):
             detailed_date = date_tag.text.strip() if date_tag else ""
             
         entry_updated = parse_date_to_iso(detailed_date)
-        
         if not feed_updated:
             feed_updated = entry_updated
-        
-        entry = f"""
-  <entry>
-    <title>{escape(title)}</title>
-    <id>{escape(article_url)}</id>
-    <link href="{escape(article_url)}"/>
-    <updated>{escape(entry_updated)}</updated>
-    <author>
-      <name>{escape(member_name)}</name>
-    </author>
-    <content type="html"><![CDATA[
-{content}
-    ]]></content>
-  </entry>"""
-        entries.append(entry)
+            
+        new_member_state.append({
+            "url": article_url,
+            "title": title,
+            "updated": entry_updated,
+            "content": content
+        })
 
-    if not entries:
+    if not new_member_state:
+        print(f"[{member_id}] [スキップ] {member_name} の有効なブログ記事はありませんでした")
         return
         
     if not feed_updated:
         feed_updated = datetime.now(timezone.utc).isoformat()
+        
+    entries_xml = ""
+    for entry_data in new_member_state:
+        entries_xml += f"""
+  <entry>
+    <title>{escape(entry_data['title'])}</title>
+    <id>{escape(entry_data['url'])}</id>
+    <link href="{escape(entry_data['url'])}"/>
+    <updated>{escape(entry_data['updated'])}</updated>
+    <author>
+      <name>{escape(member_name)}</name>
+    </author>
+    <content type="html"><![CDATA[
+{entry_data['content']}
+    ]]></content>
+  </entry>"""
         
     feed_filename = f"feed_{member_id}.xml"
     feed_url = f"{FEED_BASE_URL}{feed_filename}"
@@ -172,20 +214,42 @@ def generate_feed_for_member(member_id):
   <title>日向坂46｜{escape(member_name)} 公式ブログ</title>
   <id>{escape(feed_url)}</id>
   <updated>{escape(feed_updated)}</updated>
-  <link href="{escape(feed_url)}" rel="self"/>{"".join(entries)}
+  <link href="{escape(feed_url)}" rel="self"/>{entries_xml}
 </feed>
 """
     with open(f"feeds/{feed_filename}", "w", encoding="utf-8") as f:
         f.write(xml)
     print(f"[{member_id}] [完了] {member_name} のフィード生成 (feeds/{feed_filename})")
+    
+    state[member_id] = new_member_state
 
 def main():
     print("=== [処理開始] 全メンバーのRSS生成を開始します ===")
     os.makedirs("feeds", exist_ok=True)
-    for member_id in MEMBER_IDS:
-        generate_feed_for_member(member_id)
-        # ★メンバーごとの間隔も3秒に延長
+    
+    if os.path.exists(STATE_FILE):
+        print("-> [読込] 過去のブログ履歴データを読み込みます...")
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+        except Exception as e:
+            print(f"-> [警告] 履歴ファイルの読み込みに失敗しました。新規で作成します: {e}")
+            state = {}
+    else:
+        print("-> [読込] 過去の履歴がありません。新規で全取得します。")
+        state = {}
+
+    for member_id in MEMBER_MAPPING.keys():
+        generate_feed_for_member(member_id, state)
         time.sleep(3)
+        
+    print(f"=== [保存] ブログ履歴データを {STATE_FILE} に保存します ===")
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"-> [エラー] 履歴ファイルの保存に失敗しました: {e}")
+        
     print("=== [処理完了] 全てのRSS生成が正常に終了しました ===")
 
 if __name__ == "__main__":
